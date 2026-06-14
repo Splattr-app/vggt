@@ -9,6 +9,38 @@ import pycolmap
 from .projection import project_3D_points_np
 
 
+def _set_image_points2d(image, points2D_list):
+    # pycolmap renamed ListPoint2D -> Point2DList in newer releases.
+    if hasattr(pycolmap, "Point2DList"):
+        image.points2D = pycolmap.Point2DList(points2D_list)
+    else:
+        image.points2D = pycolmap.ListPoint2D(points2D_list)
+
+
+def _ensure_rig_for_camera(reconstruction, camera_id):
+    # pycolmap >=4 requires a rig containing the camera sensor when using
+    # add_image_with_trivial_frame.
+    if not hasattr(reconstruction, "add_rig"):
+        return
+    if hasattr(reconstruction, "exists_rig") and reconstruction.exists_rig(camera_id):
+        return
+
+    rig = pycolmap.Rig(rig_id=camera_id)
+    sensor_id = pycolmap.sensor_t(pycolmap.SensorType.CAMERA, camera_id)
+    rig.add_ref_sensor(sensor_id)
+    reconstruction.add_rig(rig)
+
+
+def _add_image_with_pose(reconstruction, image, cam_from_world):
+    # pycolmap >=4 stores pose in Frame, not writable on Image.
+    if hasattr(reconstruction, "add_image_with_trivial_frame"):
+        _ensure_rig_for_camera(reconstruction, image.camera_id)
+        reconstruction.add_image_with_trivial_frame(image, cam_from_world)
+    else:
+        image.cam_from_world = cam_from_world
+        reconstruction.add_image(image)
+
+
 def batch_np_matrix_to_pycolmap(
     points3d,
     extrinsics,
@@ -105,9 +137,7 @@ def batch_np_matrix_to_pycolmap(
             pycolmap.Rotation3d(extrinsics[fidx][:3, :3]), extrinsics[fidx][:3, 3]
         )  # Rot and Trans
 
-        image = pycolmap.Image(
-            id=fidx + 1, name=f"image_{fidx + 1}", camera_id=camera.camera_id, cam_from_world=cam_from_world
-        )
+        image = pycolmap.Image(image_id=fidx + 1, name=f"image_{fidx + 1}", camera_id=camera.camera_id)
 
         points2D_list = []
 
@@ -133,14 +163,11 @@ def batch_np_matrix_to_pycolmap(
         assert point2D_idx == len(points2D_list)
 
         try:
-            image.points2D = pycolmap.ListPoint2D(points2D_list)
-            image.registered = True
-        except:
+            _set_image_points2d(image, points2D_list)
+            _add_image_with_pose(reconstruction, image, cam_from_world)
+        except Exception:
             print(f"frame {fidx + 1} is out of BA")
-            image.registered = False
-
-        # add image
-        reconstruction.add_image(image)
+            _add_image_with_pose(reconstruction, image, cam_from_world)
 
     return reconstruction, valid_mask
 
@@ -253,9 +280,7 @@ def batch_np_matrix_to_pycolmap_wo_track(
             pycolmap.Rotation3d(extrinsics[fidx][:3, :3]), extrinsics[fidx][:3, 3]
         )  # Rot and Trans
 
-        image = pycolmap.Image(
-            id=fidx + 1, name=f"image_{fidx + 1}", camera_id=camera.camera_id, cam_from_world=cam_from_world
-        )
+        image = pycolmap.Image(image_id=fidx + 1, name=f"image_{fidx + 1}", camera_id=camera.camera_id)
 
         points2D_list = []
 
@@ -278,14 +303,11 @@ def batch_np_matrix_to_pycolmap_wo_track(
         assert point2D_idx == len(points2D_list)
 
         try:
-            image.points2D = pycolmap.ListPoint2D(points2D_list)
-            image.registered = True
-        except:
+            _set_image_points2d(image, points2D_list)
+            _add_image_with_pose(reconstruction, image, cam_from_world)
+        except Exception:
             print(f"frame {fidx + 1} does not have any points")
-            image.registered = False
-
-        # add image
-        reconstruction.add_image(image)
+            _add_image_with_pose(reconstruction, image, cam_from_world)
 
     return reconstruction
 
